@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
-use std::thread::JoinHandle;
-
+use std::env;
+use std::thread::{JoinHandle, sleep};
+use std::time::Duration;
 use bdk_chain::collections::BTreeMap;
 use bdk_chain::spk_client::{FullScanRequest, FullScanResult, SyncRequest, SyncResult};
 use bdk_chain::{
@@ -299,6 +300,8 @@ fn full_scan_for_index_and_graph_blocking<K: Ord + Clone>(
             if gap_limit_reached {
                 break;
             }
+            
+            esplora_api_throttle();
         }
 
         if let Some(last_active_index) = last_active_index {
@@ -362,6 +365,8 @@ fn sync_for_index_and_graph_blocking(
                 let _ = tx_graph.insert_anchor(txid, anchor);
             }
         }
+        
+        esplora_api_throttle();
     }
 
     for op in outpoints {
@@ -388,9 +393,27 @@ fn sync_for_index_and_graph_blocking(
                 }
             }
         }
+        
+        esplora_api_throttle();
     }
 
     Ok(tx_graph)
+}
+
+/// Throttle the script hash transactions calls to the Esplora API.
+/// default to 0 calls per second if the variable SCRIPTHASH_TXS_CALL_RATE_PER_SECOND is not set
+fn esplora_api_throttle() {
+    let call_rate_per_second: u64 = env::var("SCRIPTHASH_TXS_CALL_RATE_PER_SECOND")
+        .unwrap_or_else(|_| "0".to_string()) // Default to 0 to prevent any throttling
+        .parse()
+        .expect("CALL_RATE_PER_SECOND must be a valid integer");
+
+    // Calculate the sleep duration
+    if call_rate_per_second > 0 {
+        let sleep_duration = Duration::from_secs_f64(1.0 / call_rate_per_second as f64);
+        // Sleep to enforce the call rate
+        sleep(sleep_duration);
+    }
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
-
+use std::env;
+use std::thread::sleep;
+use std::time::Duration;
 use async_trait::async_trait;
 use bdk_chain::spk_client::{FullScanRequest, FullScanResult, SyncRequest, SyncResult};
 use bdk_chain::{
@@ -11,7 +13,6 @@ use bdk_chain::{
 use bdk_chain::{Anchor, Indexed};
 use esplora_client::{Amount, TxStatus};
 use futures::{stream::FuturesOrdered, TryStreamExt};
-
 use crate::anchor_from_status;
 
 /// [`esplora_client::Error`]
@@ -268,6 +269,8 @@ async fn full_scan_for_index_and_graph<K: Ord + Clone + Send>(
                             if tx_count < 25 {
                                 break Result::<_, Error>::Ok((spk_index, spk_txs));
                             }
+                            
+                            esplora_api_throttle();
                         }
                     }
                 })
@@ -371,6 +374,8 @@ async fn sync_for_index_and_graph(
                 let _ = graph.insert_anchor(txid, anchor);
             }
         }
+        
+        esplora_api_throttle();
     }
 
     for op in outpoints.into_iter() {
@@ -397,9 +402,27 @@ async fn sync_for_index_and_graph(
                 }
             }
         }
+        
+        esplora_api_throttle();
     }
 
     Ok(graph)
+}
+
+/// Throttle the script hash transactions calls to the Esplora API.
+/// default to 0 calls per second if the variable SCRIPTHASH_TXS_CALL_RATE_PER_SECOND is not set
+fn esplora_api_throttle() {
+    let call_rate_per_second: u64 = env::var("SCRIPTHASH_TXS_CALL_RATE_PER_SECOND")
+        .unwrap_or_else(|_| "0".to_string()) // Default to 0 to prevent any throttling
+        .parse()
+        .expect("CALL_RATE_PER_SECOND must be a valid integer");
+
+    // Calculate the sleep duration
+    if call_rate_per_second > 0 {
+        let sleep_duration = Duration::from_secs_f64(1.0 / call_rate_per_second as f64);
+        // Sleep to enforce the call rate
+        sleep(sleep_duration);
+    }
 }
 
 #[cfg(test)]
